@@ -1,5 +1,4 @@
 import streamlit as st
-import time
 from datetime import datetime
 
 st.set_page_config(
@@ -8,165 +7,172 @@ st.set_page_config(
     layout="centered"
 )
 
-# -------------------------
-# 세션 상태 초기화
-# -------------------------
+# ------------------
+# Session State
+# ------------------
 
-if "green_seconds" not in st.session_state:
-    st.session_state.green_seconds = 0
+if "green_minutes" not in st.session_state:
+    st.session_state.green_minutes = 0
 
-if "reward_given" not in st.session_state:
-    st.session_state.reward_given = False
+if "reward" not in st.session_state:
+    st.session_state.reward = False
 
-if "noise_level" not in st.session_state:
-    st.session_state.noise_level = 0
-
-# -------------------------
-# 제목
-# -------------------------
+# ------------------
+# Header
+# ------------------
 
 st.title("🔊 Quiet Hero")
 st.subheader("소란스러움 경고 앱")
 
 st.markdown("""
-현재 소란스러움 정도를 입력하여 상태를 확인하세요.
+### 사용 방법
+현재 측정된 소음(dB)을 입력하세요.
 
-실제 마이크 측정은 브라우저 보안 문제로
-Streamlit Cloud에서 안정적으로 동작하기 어렵기 때문에
-가장 오류 없는 방식으로 구현했습니다.
+색상 기준
+
+- 🟢 초록 : 0~39 dB
+- 🟡 노랑 : 40~54 dB
+- 🟠 주황 : 55~69 dB
+- 🔴 빨강 : 70 dB 이상
+
+70 dB 이상일 때만 경고가 발생합니다.
 """)
 
-# -------------------------
-# 소음 입력
-# -------------------------
+# ------------------
+# Noise Input
+# ------------------
 
 noise = st.slider(
-    "현재 소란스러움 지수",
+    "현재 소음 (dB)",
     min_value=0,
-    max_value=100,
+    max_value=120,
     value=30
 )
 
-st.session_state.noise_level = noise
+# ------------------
+# Status
+# ------------------
 
-# -------------------------
-# 상태 판정
-# -------------------------
-
-status = ""
-color = ""
-message = ""
-
-if noise < 25:
-    status = "초록"
+if noise < 40:
+    status = "🟢 초록"
     color = "#4CAF50"
-    message = "매우 조용합니다."
-elif noise < 50:
-    status = "노랑"
-    color = "#FFEB3B"
-    message = "조금 소란스럽습니다."
-elif noise < 75:
-    status = "주황"
-    color = "#FF9800"
-    message = "시끄러운 상태입니다."
-else:
-    status = "빨강"
-    color = "#F44336"
-    message = "매우 시끄럽습니다!"
+    desc = "조용한 환경입니다."
 
-# -------------------------
-# 색상 카드
-# -------------------------
+elif noise < 55:
+    status = "🟡 노랑"
+    color = "#FFEB3B"
+    desc = "약간의 생활 소음이 있습니다."
+
+elif noise < 70:
+    status = "🟠 주황"
+    color = "#FF9800"
+    desc = "다소 시끄러운 상태입니다."
+
+else:
+    status = "🔴 빨강"
+    color = "#F44336"
+    desc = "70dB 이상 소음이 감지되었습니다."
+
+# ------------------
+# Color Card
+# ------------------
 
 st.markdown(
     f"""
     <div style="
-        background-color:{color};
-        height:180px;
+        background:{color};
+        height:220px;
         border-radius:20px;
         display:flex;
-        align-items:center;
         justify-content:center;
-        font-size:42px;
-        font-weight:bold;
-        color:black;">
+        align-items:center;
+        font-size:40px;
+        font-weight:bold;">
         {status}
     </div>
     """,
     unsafe_allow_html=True
 )
 
-st.write(message)
+st.write(desc)
 
-# -------------------------
-# 경고음
-# -------------------------
+# ------------------
+# Warning
+# ------------------
 
-if status == "빨강":
+if noise >= 70:
 
-    st.error("🚨 소음이 너무 큽니다!")
+    st.error("🚨 경고! 현재 소음이 70dB 이상입니다.")
 
-    st.markdown("""
-    <audio autoplay>
-      <source src="https://www.soundjay.com/buttons/beep-01a.mp3" type="audio/mpeg">
-    </audio>
-    """,
-    unsafe_allow_html=True)
+    st.markdown(
+        """
+        <h1 style='text-align:center;color:red;'>
+        🔇 조용히 해주세요!
+        </h1>
+        """,
+        unsafe_allow_html=True
+    )
 
-# -------------------------
-# 조용한 시간 누적
-# -------------------------
+    st.markdown(
+        """
+        <audio autoplay>
+            <source src="https://www.soundjay.com/buttons/beep-01a.mp3" type="audio/mpeg">
+        </audio>
+        """,
+        unsafe_allow_html=True
+    )
 
-if status == "초록":
-    st.session_state.green_seconds += 60
+# ------------------
+# Quiet Time Reward
+# ------------------
 
-minutes = st.session_state.green_seconds // 60
+if noise < 40:
+    st.session_state.green_minutes += 1
 
 st.metric(
     "누적 조용한 시간",
-    f"{minutes} 분"
+    f"{st.session_state.green_minutes} 분"
 )
 
-# -------------------------
-# 보상
-# -------------------------
-
 if (
-    st.session_state.green_seconds >= 2700
-    and not st.session_state.reward_given
+    st.session_state.green_minutes >= 45
+    and not st.session_state.reward
 ):
-    st.session_state.reward_given = True
+    st.session_state.reward = True
 
-if st.session_state.reward_given:
+if st.session_state.reward:
 
     st.success("🏆 보상 획득!")
-    st.balloons()
 
     st.markdown("""
-    ## 🌟 Quiet Hero 인증
+    ## 🌟 Quiet Hero 인증서
 
-    45분 동안 조용한 환경을 유지했습니다!
+    45분 동안 조용한 환경을 유지했습니다.
     """)
 
-# -------------------------
-# 통계
-# -------------------------
+    st.balloons()
+
+# ------------------
+# Statistics
+# ------------------
 
 st.divider()
 
-st.subheader("📊 오늘의 상태")
+st.subheader("📊 현재 정보")
 
-st.write(f"현재 소란스러움 지수 : {noise}")
+st.write(f"현재 소음 : {noise} dB")
 st.write(f"현재 상태 : {status}")
-st.write(f"측정 시간 : {datetime.now().strftime('%H:%M:%S')}")
+st.write(
+    f"측정 시각 : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+)
 
-# -------------------------
-# 리셋
-# -------------------------
+# ------------------
+# Reset
+# ------------------
 
 if st.button("기록 초기화"):
 
-    st.session_state.green_seconds = 0
-    st.session_state.reward_given = False
+    st.session_state.green_minutes = 0
+    st.session_state.reward = False
 
-    st.success("초기화 완료")
+    st.success("기록이 초기화되었습니다.")
