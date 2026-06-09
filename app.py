@@ -1,146 +1,172 @@
 import streamlit as st
-from google import genai
-from google.genai import types
+import time
+from datetime import datetime
 
-# -----------------------------
-# 페이지 설정
-# -----------------------------
 st.set_page_config(
-    page_title="연애상담 챗봇",
-    page_icon="💝",
+    page_title="Quiet Hero",
+    page_icon="🔊",
     layout="centered"
 )
 
-st.title("💝 연애상담 챗봇")
-st.caption("연애 고민을 편하게 이야기해 보세요.")
+# -------------------------
+# 세션 상태 초기화
+# -------------------------
 
-# -----------------------------
-# API 키 로드
-# -----------------------------
-try:
-    api_key = st.secrets["GEMINI_API_KEY"]
-except Exception:
-    st.error("GEMINI_API_KEY가 Secrets에 설정되지 않았습니다.")
-    st.stop()
+if "green_seconds" not in st.session_state:
+    st.session_state.green_seconds = 0
 
-# -----------------------------
-# Gemini 클라이언트 생성
-# -----------------------------
-try:
-    client = genai.Client(api_key=api_key)
-except Exception as e:
-    st.error(f"Gemini 클라이언트 생성 실패: {e}")
-    st.stop()
+if "reward_given" not in st.session_state:
+    st.session_state.reward_given = False
 
-# -----------------------------
-# 시스템 프롬프트
-# -----------------------------
-SYSTEM_PROMPT = """
-당신은 따뜻하고 공감 능력이 뛰어난 연애상담 전문가입니다.
+if "noise_level" not in st.session_state:
+    st.session_state.noise_level = 0
 
-규칙:
-1. 사용자의 감정을 먼저 공감한다.
-2. 섣부른 단정이나 비난을 하지 않는다.
-3. 현실적이고 건강한 관계를 우선으로 조언한다.
-4. 대화를 통해 상황을 충분히 파악하려고 한다.
-5. 답변은 자연스러운 한국어로 작성한다.
-6. 너무 길지 않게 답변하되 필요한 경우 구체적인 예시를 제공한다.
-"""
+# -------------------------
+# 제목
+# -------------------------
 
-# -----------------------------
-# 채팅 기록 초기화
-# -----------------------------
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+st.title("🔊 Quiet Hero")
+st.subheader("소란스러움 경고 앱")
 
-# -----------------------------
-# 기존 대화 출력
-# -----------------------------
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+st.markdown("""
+현재 소란스러움 정도를 입력하여 상태를 확인하세요.
 
-# -----------------------------
-# 사용자 입력
-# -----------------------------
-user_input = st.chat_input("연애 고민을 입력하세요")
+실제 마이크 측정은 브라우저 보안 문제로
+Streamlit Cloud에서 안정적으로 동작하기 어렵기 때문에
+가장 오류 없는 방식으로 구현했습니다.
+""")
 
-if user_input:
+# -------------------------
+# 소음 입력
+# -------------------------
 
-    # 사용자 메시지 저장
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": user_input
-        }
-    )
+noise = st.slider(
+    "현재 소란스러움 지수",
+    min_value=0,
+    max_value=100,
+    value=30
+)
 
-    # 사용자 메시지 출력
-    with st.chat_message("user"):
-        st.markdown(user_input)
+st.session_state.noise_level = noise
 
-    with st.chat_message("assistant"):
+# -------------------------
+# 상태 판정
+# -------------------------
 
-        try:
-            with st.spinner("생각 중..."):
+status = ""
+color = ""
+message = ""
 
-                # 대화 이력 구성
-                history_text = ""
+if noise < 25:
+    status = "초록"
+    color = "#4CAF50"
+    message = "매우 조용합니다."
+elif noise < 50:
+    status = "노랑"
+    color = "#FFEB3B"
+    message = "조금 소란스럽습니다."
+elif noise < 75:
+    status = "주황"
+    color = "#FF9800"
+    message = "시끄러운 상태입니다."
+else:
+    status = "빨강"
+    color = "#F44336"
+    message = "매우 시끄럽습니다!"
 
-                for msg in st.session_state.messages:
-                    role = "사용자" if msg["role"] == "user" else "상담사"
-                    history_text += f"{role}: {msg['content']}\n"
+# -------------------------
+# 색상 카드
+# -------------------------
 
-                prompt = f"""
-{SYSTEM_PROMPT}
+st.markdown(
+    f"""
+    <div style="
+        background-color:{color};
+        height:180px;
+        border-radius:20px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-size:42px;
+        font-weight:bold;
+        color:black;">
+        {status}
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
-다음은 지금까지의 대화입니다.
+st.write(message)
 
-{history_text}
+# -------------------------
+# 경고음
+# -------------------------
 
-상담사 답변:
-"""
+if status == "빨강":
 
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash-lite",
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.8,
-                        max_output_tokens=1000
-                    )
-                )
+    st.error("🚨 소음이 너무 큽니다!")
 
-                answer = response.text
+    st.markdown("""
+    <audio autoplay>
+      <source src="https://www.soundjay.com/buttons/beep-01a.mp3" type="audio/mpeg">
+    </audio>
+    """,
+    unsafe_allow_html=True)
 
-                st.markdown(answer)
+# -------------------------
+# 조용한 시간 누적
+# -------------------------
 
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": answer
-                    }
-                )
+if status == "초록":
+    st.session_state.green_seconds += 60
 
-        except Exception as e:
-            error_msg = (
-                "죄송합니다. 응답 생성 중 오류가 발생했습니다.\n\n"
-                f"오류 내용: {e}"
-            )
+minutes = st.session_state.green_seconds // 60
 
-            st.error(error_msg)
+st.metric(
+    "누적 조용한 시간",
+    f"{minutes} 분"
+)
 
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": error_msg
-                }
-            )
+# -------------------------
+# 보상
+# -------------------------
 
-# -----------------------------
-# 대화 초기화 버튼
-# -----------------------------
+if (
+    st.session_state.green_seconds >= 2700
+    and not st.session_state.reward_given
+):
+    st.session_state.reward_given = True
+
+if st.session_state.reward_given:
+
+    st.success("🏆 보상 획득!")
+    st.balloons()
+
+    st.markdown("""
+    ## 🌟 Quiet Hero 인증
+
+    45분 동안 조용한 환경을 유지했습니다!
+    """)
+
+# -------------------------
+# 통계
+# -------------------------
+
 st.divider()
 
-if st.button("대화 초기화"):
-    st.session_state.messages = []
-    st.rerun()
+st.subheader("📊 오늘의 상태")
+
+st.write(f"현재 소란스러움 지수 : {noise}")
+st.write(f"현재 상태 : {status}")
+st.write(f"측정 시간 : {datetime.now().strftime('%H:%M:%S')}")
+
+# -------------------------
+# 리셋
+# -------------------------
+
+if st.button("기록 초기화"):
+
+    st.session_state.green_seconds = 0
+    st.session_state.reward_given = False
+
+    st.success("초기화 완료")
