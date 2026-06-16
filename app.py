@@ -1,178 +1,138 @@
 import streamlit as st
-from datetime import datetime
+import numpy as np
+import pandas as pd
+import time
+from streamlit_mic_recorder import mic_recorder
 
 st.set_page_config(
-    page_title="Quiet Hero",
-    page_icon="🔊",
-    layout="centered"
+    page_title="교실 소음 신호등",
+    page_icon="🚦",
+    layout="wide"
 )
 
-# ------------------
-# Session State
-# ------------------
+st.title("🚦 교실 소음 신호등")
+st.markdown("학생들의 소음을 실시간으로 측정합니다.")
 
-if "green_minutes" not in st.session_state:
-    st.session_state.green_minutes = 0
+# 세션 상태 초기화
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-if "reward" not in st.session_state:
-    st.session_state.reward = False
+if "quiet_start" not in st.session_state:
+    st.session_state.quiet_start = None
 
-# ------------------
-# Header
-# ------------------
+if "warning_count" not in st.session_state:
+    st.session_state.warning_count = 0
 
-st.title("🔊 Quiet Hero")
-st.subheader("소란스러움 경고 앱")
 
-st.markdown("""
-### 사용 방법
-현재 측정된 소음(dB)을 입력하세요.
+def calculate_db(audio_bytes):
+    try:
+        audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
 
-색상 기준
+        if len(audio_array) == 0:
+            return 0
 
-- 🟢 초록 : 0~39 dB
-- 🟡 노랑 : 40~54 dB
-- 🟠 주황 : 55~69 dB
-- 🔴 빨강 : 70 dB 이상
+        rms = np.sqrt(np.mean(audio_array.astype(np.float64) ** 2))
 
-70 dB 이상일 때만 경고가 발생합니다.
-""")
+        if rms <= 0:
+            return 0
 
-# ------------------
-# Noise Input
-# ------------------
+        db = 20 * np.log10(rms)
+        return round(float(db), 1)
 
-noise = st.slider(
-    "현재 소음 (dB)",
-    min_value=0,
-    max_value=120,
-    value=30
+    except Exception:
+        return 0
+
+
+st.subheader("🎤 소음 측정")
+
+audio = mic_recorder(
+    start_prompt="측정 시작",
+    stop_prompt="측정 완료",
+    key="noise_recorder"
 )
 
-# ------------------
-# Status
-# ------------------
+if audio:
 
-if noise < 40:
-    status = "🟢 초록"
-    color = "#4CAF50"
-    desc = "조용한 환경입니다."
+    try:
+        audio_bytes = audio["bytes"]
 
-elif noise < 55:
-    status = "🟡 노랑"
-    color = "#FFEB3B"
-    desc = "약간의 생활 소음이 있습니다."
+        db = calculate_db(audio_bytes)
 
-elif noise < 70:
-    status = "🟠 주황"
-    color = "#FF9800"
-    desc = "다소 시끄러운 상태입니다."
+        st.metric("현재 소음 수준", f"{db} dB")
 
-else:
-    status = "🔴 빨강"
-    color = "#F44336"
-    desc = "70dB 이상 소음이 감지되었습니다."
+        st.session_state.history.append(
+            {
+                "시간": time.strftime("%H:%M:%S"),
+                "dB": db
+            }
+        )
 
-# ------------------
-# Color Card
-# ------------------
+        # 신호등 상태
+        if db < 45:
+            color = "🟢"
+            state = "조용함"
 
-st.markdown(
-    f"""
-    <div style="
-        background:{color};
-        height:220px;
-        border-radius:20px;
-        display:flex;
-        justify-content:center;
-        align-items:center;
-        font-size:40px;
-        font-weight:bold;">
-        {status}
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+            if st.session_state.quiet_start is None:
+                st.session_state.quiet_start = time.time()
 
-st.write(desc)
+        elif db < 60:
+            color = "🟡"
+            state = "주의"
 
-# ------------------
-# Warning
-# ------------------
+            st.session_state.quiet_start = None
 
-if noise >= 70:
+        else:
+            color = "🔴"
+            state = "시끄러움"
 
-    st.error("🚨 경고! 현재 소음이 70dB 이상입니다.")
+            st.session_state.quiet_start = None
 
-    st.markdown(
-        """
-        <h1 style='text-align:center;color:red;'>
-        🔇 조용히 해주세요!
-        </h1>
-        """,
-        unsafe_allow_html=True
-    )
+            st.audio(
+                "https://www.soundjay.com/buttons/beep-01a.mp3"
+            )
 
-    st.markdown(
-        """
-        <audio autoplay>
-            <source src="https://www.soundjay.com/buttons/beep-01a.mp3" type="audio/mpeg">
-        </audio>
-        """,
-        unsafe_allow_html=True
-    )
+        st.markdown(
+            f"""
+            # {color} {state}
+            """
+        )
 
-# ------------------
-# Quiet Time Reward
-# ------------------
+        # 50분 조용함 유지
+        if st.session_state.quiet_start:
 
-if noise < 40:
-    st.session_state.green_minutes += 1
+            elapsed = time.time() - st.session_state.quiet_start
 
-st.metric(
-    "누적 조용한 시간",
-    f"{st.session_state.green_minutes} 분"
-)
+            remain = max(0, 3000 - elapsed)
 
-if (
-    st.session_state.green_minutes >= 45
-    and not st.session_state.reward
-):
-    st.session_state.reward = True
+            st.info(
+                f"칭찬까지 남은 시간 : {int(remain // 60)}분"
+            )
 
-if st.session_state.reward:
+            if elapsed >= 3000:
+                st.success("🎉 50분 동안 조용했습니다! 정말 훌륭해요!")
+                st.balloons()
 
-    st.success("🏆 보상 획득!")
+    except Exception as e:
+        st.error(f"오류 발생: {e}")
 
-    st.markdown("""
-    ## 🌟 Quiet Hero 인증서
+# 그래프
+if len(st.session_state.history) > 0:
 
-    45분 동안 조용한 환경을 유지했습니다.
-    """)
+    st.subheader("📈 소음 변화")
 
-    st.balloons()
+    df = pd.DataFrame(st.session_state.history)
 
-# ------------------
-# Statistics
-# ------------------
+    st.line_chart(df["dB"])
 
+    st.dataframe(df, use_container_width=True)
+
+# 기준 안내
 st.divider()
 
-st.subheader("📊 현재 정보")
+st.subheader("📋 소음 기준")
 
-st.write(f"현재 소음 : {noise} dB")
-st.write(f"현재 상태 : {status}")
-st.write(
-    f"측정 시각 : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-)
-
-# ------------------
-# Reset
-# ------------------
-
-if st.button("기록 초기화"):
-
-    st.session_state.green_minutes = 0
-    st.session_state.reward = False
-
-    st.success("기록이 초기화되었습니다.")
+st.markdown("""
+- 🟢 45 dB 미만 : 조용함
+- 🟡 45 ~ 60 dB : 주의
+- 🔴 60 dB 이상 : 시끄러움
+""")
