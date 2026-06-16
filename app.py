@@ -11,118 +11,102 @@ st.set_page_config(
 )
 
 st.title("🚦 교실 소음 신호등")
-st.markdown("학생들의 소음을 실시간으로 측정합니다.")
+st.write("녹음한 소리를 분석하여 교실 소음 수준을 표시합니다.")
 
-# 세션 상태 초기화
+# 세션 상태
 if "history" not in st.session_state:
     st.session_state.history = []
 
-if "quiet_start" not in st.session_state:
-    st.session_state.quiet_start = None
+if "quiet_count" not in st.session_state:
+    st.session_state.quiet_count = 0
 
-if "warning_count" not in st.session_state:
-    st.session_state.warning_count = 0
-
-
-def calculate_db(audio_bytes):
+# 소음 계산 함수
+def calculate_noise(audio_bytes):
     try:
-        audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+        audio = np.frombuffer(audio_bytes, dtype=np.int16)
 
-        if len(audio_array) == 0:
+        if len(audio) == 0:
             return 0
 
-        rms = np.sqrt(np.mean(audio_array.astype(np.float64) ** 2))
+        rms = np.sqrt(np.mean(audio.astype(np.float64) ** 2))
 
         if rms <= 0:
             return 0
 
         db = 20 * np.log10(rms)
-        return round(float(db), 1)
+
+        return round(db, 1)
 
     except Exception:
         return 0
 
-
 st.subheader("🎤 소음 측정")
 
 audio = mic_recorder(
-    start_prompt="측정 시작",
-    stop_prompt="측정 완료",
-    key="noise_recorder"
+    start_prompt="🎙️ 녹음 시작",
+    stop_prompt="⏹️ 녹음 종료",
+    key="noise"
 )
 
-if audio:
+if audio is not None:
 
     try:
-        audio_bytes = audio["bytes"]
 
-        db = calculate_db(audio_bytes)
+        audio_bytes = audio.get("bytes")
 
-        st.metric("현재 소음 수준", f"{db} dB")
+        if audio_bytes:
 
-        st.session_state.history.append(
-            {
-                "시간": time.strftime("%H:%M:%S"),
-                "dB": db
-            }
-        )
+            db = calculate_noise(audio_bytes)
 
-        # 신호등 상태
-        if db < 45:
-            color = "🟢"
-            state = "조용함"
+            st.metric("현재 소음 수준", f"{db} dB")
 
-            if st.session_state.quiet_start is None:
-                st.session_state.quiet_start = time.time()
+            now = time.strftime("%H:%M:%S")
 
-        elif db < 60:
-            color = "🟡"
-            state = "주의"
+            st.session_state.history.append({
+                "시간": now,
+                "소음(dB)": db
+            })
 
-            st.session_state.quiet_start = None
+            if db < 45:
 
-        else:
-            color = "🔴"
-            state = "시끄러움"
+                st.success("🟢 매우 조용합니다.")
 
-            st.session_state.quiet_start = None
+                st.session_state.quiet_count += 1
 
-            st.audio(
-                "https://www.soundjay.com/buttons/beep-01a.mp3"
-            )
+            elif db < 60:
 
-        st.markdown(
-            f"""
-            # {color} {state}
-            """
-        )
+                st.warning("🟡 약간 시끄럽습니다.")
 
-        # 50분 조용함 유지
-        if st.session_state.quiet_start:
+                st.session_state.quiet_count = 0
 
-            elapsed = time.time() - st.session_state.quiet_start
+            else:
 
-            remain = max(0, 3000 - elapsed)
+                st.error("🔴 너무 시끄럽습니다!")
 
-            st.info(
-                f"칭찬까지 남은 시간 : {int(remain // 60)}분"
-            )
+                st.session_state.quiet_count = 0
 
-            if elapsed >= 3000:
-                st.success("🎉 50분 동안 조용했습니다! 정말 훌륭해요!")
+            # 약 50번 조용함 달성 시 칭찬
+            if st.session_state.quiet_count >= 50:
+
                 st.balloons()
+
+                st.success(
+                    "🎉 오랫동안 조용한 분위기를 유지했습니다! 훌륭합니다!"
+                )
+
+                st.session_state.quiet_count = 0
 
     except Exception as e:
         st.error(f"오류 발생: {e}")
 
-# 그래프
+# 기록 표시
 if len(st.session_state.history) > 0:
 
-    st.subheader("📈 소음 변화")
+    st.subheader("📈 소음 기록")
 
     df = pd.DataFrame(st.session_state.history)
 
-    st.line_chart(df["dB"])
+    st.line_chart(df["소음(dB)"])
 
     st.dataframe(df, use_container_width=True)
 
@@ -132,7 +116,12 @@ st.divider()
 st.subheader("📋 소음 기준")
 
 st.markdown("""
-- 🟢 45 dB 미만 : 조용함
-- 🟡 45 ~ 60 dB : 주의
-- 🔴 60 dB 이상 : 시끄러움
+### 🟢 조용함
+45 dB 미만
+
+### 🟡 주의
+45 ~ 60 dB
+
+### 🔴 시끄러움
+60 dB 이상
 """)
