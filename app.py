@@ -1,125 +1,114 @@
-\import streamlit as st
+import streamlit as st
 import numpy as np
 import pandas as pd
 import time
-import wave
-import io
-from streamlit_mic_recorder import mic_recorder
+from audiorecorder import audiorecorder
 
-st.set_page_config(
-    page_title="교실 소음 신호등",
-    page_icon="🚦",
-    layout="wide"
-)
+# 1. 페이지 기본 설정 및 스타일
+st.set_page_config(page_title="교실 소음 신호등 🚦", page_icon="🔇", layout="centered")
 
-st.title("🚦 교실 소음 신호등")
-st.write("녹음한 소리를 분석하여 교실 소음 수준을 표시합니다.")
-
-# 세션 상태 초기화
-if "history" not in st.session_state:
-    st.session_state.history = []
-
-if "quiet_count" not in st.session_state:
-    st.session_state.quiet_count = 0
-
-# 소음 계산 함수 (WAV 바이너리에서 순수 PCM 추출)
-def calculate_noise(audio_bytes):
-    try:
-        # 바이너리 데이터를 파일처럼 읽기
-        audio_file = io.BytesIO(audio_bytes)
-        
-        with wave.open(audio_file, 'rb') as wav:
-            # WAV 파일의 순수 프레임 데이터 읽기
-            raw_data = wav.readframes(wav.getnframes())
-            # int16 형태로 변환
-            audio_data = np.frombuffer(raw_data, dtype=np.int16)
-
-        if len(audio_data) == 0:
-            return 0
-
-        # RMS 계산
-        rms = np.sqrt(np.mean(audio_data.astype(np.float64) ** 2))
-
-        if rms <= 0:
-            return 0
-
-        # 데시벨 계산 (마이크 및 환경에 따라 기준값 조정이 필요할 수 있습니다)
-        db = 20 * np.log10(rms)
-
-        return round(db, 1)
-
-    except Exception as e:
-        # 디버깅을 위해 에러 로그를 콘솔에 남기거나 0 반환
-        return 0
-
-st.subheader("🎤 소음 측정")
-
-# mic_recorder는 기본적으로 wav 포맷으로 데이터를 제공합니다.
-audio = mic_recorder(
-    start_prompt="🎙️ 녹음 시작",
-    stop_prompt="⏹️ 녹음 종료",
-    format="wav", # 포맷을 명시적으로 지정
-    key="noise"
-)
-
-if audio is not None:
-    try:
-        audio_bytes = audio.get("bytes")
-
-        if audio_bytes:
-            db = calculate_noise(audio_bytes)
-
-            st.metric("현재 소음 수준", f"{db} dB")
-
-            now = time.strftime("%H:%M:%S")
-
-            # 기록 추가
-            st.session_state.history.append({
-                "시간": now,
-                "소음(dB)": db
-            })
-
-            # 신호등 로직 변경 (데이터가 누적되므로 st.success 등이 새로고침되어도 유지되게 하려면 시각화 고려 필요)
-            if db < 45:
-                st.success("🟢 매우 조용합니다.")
-                st.session_state.quiet_count += 1
-            elif db < 60:
-                st.warning("🟡 약간 시끄럽습니다.")
-                st.session_state.quiet_count = 0
-            else:
-                st.error("🔴 너무 시끄럽습니다!")
-                st.session_state.quiet_count = 0
-
-            # 약 50번 조용함 달성 시 칭찬 (수동 녹음 방식이므로 테스트를 위해선 횟수를 낮추는 것을 추천)
-            if st.session_state.quiet_count >= 50:
-                st.balloons()
-                st.success("🎉 오랫동안 조용한 분위기를 유지했습니다! 훌륭합니다!")
-                st.session_state.quiet_count = 0
-
-    except Exception as e:
-        st.error(f"오류 발생: {e}")
-
-# 기록 표시
-if len(st.session_state.history) > 0:
-    st.subheader("📈 소음 기록")
-    
-    df = pd.DataFrame(st.session_state.history)
-    
-    # X축을 '시간'으로 설정하여 라인 차트 시각화 개선
-    st.line_chart(df.set_index("시간")["소음(dB)"])
-    st.dataframe(df, use_container_width=True)
-
-# 기준 안내
-st.divider()
-st.subheader("📋 소음 기준")
-
+st.title("🚦 교실 소음 신호등 (Noise Monitor)")
 st.markdown("""
-### 🟢 조용함
-45 dB 미만
-
-### 🟡 주의
-45 ~ 60 dB
-
-### 🔴 시끄러움
-60 dB 이상
+학생들의 소음을 측정하고 관리하는 앱입니다. 
+아래의 **'🎙️ 소음 측정 시작'** 버튼을 누르고 교실 소리를 녹음해보세요!
 """)
+
+# 세션 상태 초기화 (소음 기록 저장용)
+if "noise_history" not in st.session_state:
+    st.session_state.noise_history = []
+
+# 2. 사이드바 - 교실 활동 모드 설정
+st.sidebar.header("⚙️ 교실 모드 설정")
+classroom_mode = st.sidebar.selectbox(
+    "현재 교실 활동을 선택하세요:",
+    ["📝 시험 및 자습 (아주 조용히)", "👥 모둠 및 토론 활동 (적당히)", "🎨 자유 시간 (활기차게)"]
+)
+
+# 모드별 기준치 설정 (임의의 상대적 데시벨 스케일)
+if "시험" in classroom_mode:
+    threshold_warn = 30
+    threshold_danger = 50
+    mode_desc = "현재는 아주 조용해야 하는 시간입니다. (목표: 30 이하)"
+elif "모둠" in classroom_mode:
+    threshold_warn = 55
+    threshold_danger = 75
+    mode_desc = "친구들과 대화하는 시간입니다. (목표: 55 이하)"
+else:
+    threshold_warn = 70
+    threshold_danger = 90
+    mode_desc = "자유롭게 소통하는 시간입니다. (목표: 70 이하)"
+
+st.sidebar.info(mode_desc)
+
+# 소음 기록 초기화 버튼
+if st.sidebar.button("📊 소음 기록 초기화"):
+    st.session_state.noise_history = []
+    st.rerun()
+
+# 3. 메인 기능 - 소음 녹음 및 분석
+st.subheader("🎙️ 소음 측정하기")
+st.caption("팁: 버튼을 한 번 눌러 녹음을 시작하고, 원하는 만큼 소음을 낸 뒤 다시 눌러 녹음을 종료하세요.")
+
+# 오디오 레코더 컴포넌트 생성 (버튼 텍스트 커스텀)
+audio = audiorecorder("▶️ 소음 측정 시작 (클릭)", "⏹️ 측정 완료 (다시 클릭)")
+
+if len(audio) > 0:
+    try:
+        # 오디오 데이터를 numpy 배열로 변환
+        wav_data = audio.frame_data
+        audio_array = np.frombuffer(wav_data, dtype=np.int16)
+        
+        # 신호의 RMS(Root Mean Square)를 계산하여 소음 크기 수치화 (상대적 수치)
+        if len(audio_array) > 0:
+            rms = np.sqrt(np.mean(audio_array**2))
+            
+            # 사람이 이해하기 쉬운 0~100 스케일의 데시벨(상대값)로 변환
+            # 로그 스케일을 적용하되 오류 방지를 위해 최소값 제한
+            raw_db = 20 * np.log10(rms) if rms > 1 else 0
+            calculated_db = min(int(max(raw_db - 20, 10)), 100) # 10~100 사이로 보정
+        else:
+            calculated_db = 10
+            
+    except Exception as e:
+        st.error(f"오디오 분석 중 오류가 발생했습니다: {e}")
+        calculated_db = 10
+
+    # 현재 시간 기록
+    current_time = time.strftime("%H:%M:%S")
+    st.session_state.noise_history.append({"시간": current_time, "소음(dB)": calculated_db})
+
+    # 4. 결과 시각화 (신호등 효과)
+    st.markdown("---")
+    st.markdown(f"### 📊 현재 교실 소음 결과: **{calculated_db} dB**")
+
+    # 상태에 따른 대형 카드 및 메시지 출력
+    if calculated_db < threshold_warn:
+        st.success("🟢 **안전 (Good):** 교실이 아주 훌륭하게 통제되고 있습니다! 잘하고 있어요.")
+        st.balloons()
+    elif calculated_db < threshold_danger:
+        st.warning("🟡 **주의 (Warning):** 조금씩 시끄러워지고 있습니다. 목소리를 조금만 낮춰주세요.")
+    else:
+        st.error("🔴 **경고 (Danger):** 교실이 너무 시끄럽습니다! 정숙해주세요.")
+        
+    st.progress(calculated_db / 100)
+
+# 5. 소음 통계 및 그래프 분석
+st.markdown("---")
+st.subheader("📈 수업 시간 소음 변화 추이")
+
+if st.session_state.noise_history:
+    df = pd.DataFrame(st.session_state.noise_history)
+    
+    # 라인 차트 표시
+    st.line_chart(df.set_index("시간"))
+    
+    # 통계 요약
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("최대 소음", f"{df['소음(dB)'].max()} dB")
+    with col2:
+        st.metric("평균 소음", f"{int(df['소음(dB)'].mean())} dB")
+    with col3:
+        st.metric("측정 횟수", f"{len(df)} 회")
+else:
+    st.info("아직 측정된 데이터가 없습니다. 상단의 버튼을 눌러 소음을 먼저 측정해주세요.")
